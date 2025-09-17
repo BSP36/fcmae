@@ -5,12 +5,13 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+# Minor modifications made by BSP36
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.layers import trunc_normal_, DropPath
 from .utils import LayerNorm, GRN
-# from utils import LayerNorm, GRN
 
 class Block(nn.Module):
     """ ConvNeXtV2 Block.
@@ -56,6 +57,7 @@ class ConvNeXtV2(nn.Module):
     def __init__(
         self,
         in_chans=3, 
+        stem_stride=4,
         depths=[3, 3, 9, 3],
         dims=[96, 192, 384, 768], 
         drop_path_rate=0.,
@@ -63,9 +65,9 @@ class ConvNeXtV2(nn.Module):
         super().__init__()
         self.depths = depths
         # downsample_layers
-        self.downsample_layers = nn.ModuleList() # stem and 3 intermediate downsampling conv layers
+        self.downsample_layers = nn.ModuleList()
         stem = nn.Sequential(
-            nn.Conv2d(in_chans, dims[0], kernel_size=4, stride=4),
+            nn.Conv2d(in_chans, dims[0], kernel_size=stem_stride, stride=stem_stride),
             LayerNorm(dims[0], eps=1e-6, data_format="channels_first")
         )
         self.downsample_layers.append(stem)
@@ -120,7 +122,7 @@ class ConvNeXtV2Sparse(ConvNeXtV2):
     def forward(self, x, mask):
         assert x.shape[-1] == mask.shape[-1]
         assert len(x.shape) == len(mask.shape) == 4
-        x = x * (~mask).float()
+        x *= (~mask).float()
         # feature extraction
         for i in range(len(self.depths)):
             x = self.downsample_layers[i](x)
@@ -149,60 +151,3 @@ class ClassificationHead(nn.Module):
 
     def forward(self, x):
         return self.head(self.norm(x.mean([-2, -1])))
-
-def convnextv2_atto(**kwargs):
-    head = ClassificationHead(num_classes=1000, in_dim=320, head_init_scale=1.)
-    model = ConvNeXtV2(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320], **kwargs)
-    model.update_head(head)
-    return model
-
-def convnextv2_femto(**kwargs):
-    head = ClassificationHead(num_classes=1000, in_dim=384, head_init_scale=1.)
-    model = ConvNeXtV2(depths=[2, 2, 6, 2], dims=[48, 96, 192, 384], **kwargs)
-    model.update_head(head)
-    return model
-
-def convnext_pico(**kwargs):
-    head = ClassificationHead(num_classes=1000, in_dim=512, head_init_scale=1.)
-    model = ConvNeXtV2(depths=[2, 2, 6, 2], dims=[64, 128, 256, 512], **kwargs)
-    model.update_head(head)
-    return model
-
-def convnextv2_nano(**kwargs):
-    head = ClassificationHead(num_classes=1000, in_dim=640, head_init_scale=1.)
-    model = ConvNeXtV2(depths=[2, 2, 8, 2], dims=[80, 160, 320, 640], **kwargs)
-    model.update_head(head)
-    return model
-
-def convnextv2_tiny(**kwargs):
-    head = ClassificationHead(num_classes=1000, in_dim=768, head_init_scale=1.)
-    model = ConvNeXtV2(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
-    model.update_head(head)
-    return model
-
-def convnextv2_base(**kwargs):
-    head = ClassificationHead(num_classes=1000, in_dim=1024, head_init_scale=1.)
-    model = ConvNeXtV2(depths=[3, 3, 27, 3], dims=[128, 256, 512, 1024], **kwargs)
-    model.update_head(head)
-    return model
-
-def convnextv2_large(**kwargs):
-    head = ClassificationHead(num_classes=1000, in_dim=1536, head_init_scale=1.)
-    model = ConvNeXtV2(depths=[3, 3, 27, 3], dims=[192, 384, 768, 1536], **kwargs)
-    model.update_head(head)
-    return model
-
-def convnextv2_huge(**kwargs):
-    head = ClassificationHead(num_classes=1000, in_dim=2816, head_init_scale=1.)
-    model = ConvNeXtV2(depths=[3, 3, 27, 3], dims=[352, 704, 1408, 2816], **kwargs)
-    model.update_head(head)
-    return model
-
-
-
-if __name__ == "__main__":
-    model = ConvNeXtV2Sparse(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320])
-    from torchinfo import summary
-    input_data = torch.randn(1, 3, 224, 224)
-    mask = (torch.randn(1, 1, 224, 224) > 0.0)
-    summary(model, input_data=(input_data, mask))

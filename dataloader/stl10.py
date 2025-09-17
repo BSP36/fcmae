@@ -1,4 +1,3 @@
-import torch
 import os
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
@@ -27,12 +26,27 @@ def get_stl10_dataloaders(
     return dataloader
 
 
-def simple_transform(input_size: tuple):
+def simple_transform(input_size: tuple) -> transforms.Compose:
+    """
+    Returns a torchvision transform pipeline inspired by ConvNeXtV2 preprocessing.
+
+    Args:
+        input_size (tuple): Desired output image size as (height, width).
+
+    Returns:
+        transforms.Compose: Composed image transformation pipeline.
+    """
     transform = transforms.Compose([
-        transforms.RandomResizedCrop(input_size, scale=(0.2, 1.0), interpolation=3),  # 3 is bicubic
+        transforms.RandomResizedCrop(
+            input_size, 
+            scale=(0.2, 1.0), 
+            interpolation=transforms.InterpolationMode.BICUBIC
+        ),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406], 
+            std=[0.229, 0.224, 0.225]
+        )
     ])
-    
     return transform

@@ -1,14 +1,7 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-
-# All rights reserved.
-
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import List, Tuple
 
 from timm.models.layers import trunc_normal_
 from .convnextv2 import Block, ConvNeXtV2Sparse
@@ -17,42 +10,46 @@ class FCMAE(nn.Module):
     """ Fully Convolutional Masked Autoencoder with ConvNeXtV2 backbone
     """
     def __init__(
-                self,
-                img_size=224,
-                in_chans=3,
-                depths=[3, 3, 9, 3],
-                dims=[96, 192, 384, 768],
-                decoder_depth=1,
-                decoder_embed_dim=512,
-                patch_size=32,
-                mask_ratio=0.6,
-                norm_pix_loss=False):
+        self,
+        num_colors: int,
+        stem_stride: int,
+        depths: List[int],
+        dims: List[int],
+        decoder_depth: int,
+        decoder_embed_dim: int,
+        patch_size: int,
+        mask_ratio: float,
+        norm_pix_loss: bool=False
+    ):
         super().__init__()
+        assert len(depths) == len(dims)
+        # assert image_shape[0] % patch_size == image_shape[1] % patch_size == 0
+        assert stem_stride * 2 ** (len(depths) - 1) == patch_size
 
         # configs
-        self.img_size = img_size
-        self.depths = depths
-        self.imds = dims
         self.patch_size = patch_size
         self.mask_ratio = mask_ratio
-        self.num_patches = (img_size // patch_size) ** 2
-        self.decoder_embed_dim = decoder_embed_dim
-        self.decoder_depth = decoder_depth
         self.norm_pix_loss = norm_pix_loss
 
-        # encoder
-        self.encoder = ConvNeXtV2Sparse(in_chans=in_chans, depths=depths, dims=dims)
-        # decoder
+        # Encoder
+        self.encoder = ConvNeXtV2Sparse(
+            in_chans=num_colors,
+            stem_stride=stem_stride,
+            depths=depths,
+            dims=dims
+        )
+        # Decoder
         self.proj = nn.Conv2d(in_channels=dims[-1],  out_channels=decoder_embed_dim, kernel_size=1)
-        # mask tokens
+        # Mask tokens
         self.mask_token = nn.Parameter(torch.zeros(1, decoder_embed_dim, 1, 1))
-        decoder = [Block(dim=decoder_embed_dim, drop_path=0.) for i in range(decoder_depth)]
+        decoder = [Block(decoder_embed_dim) for _ in range(decoder_depth)]
         self.decoder = nn.Sequential(*decoder)
         # pred
         self.pred = nn.Conv2d(
             in_channels=decoder_embed_dim,
-            out_channels=patch_size ** 2 * in_chans,
-            kernel_size=1)
+            out_channels=patch_size * patch_size * num_colors,
+            kernel_size=1
+        )
 
         self.apply(self._init_weights)
 
@@ -68,40 +65,34 @@ class FCMAE(nn.Module):
             torch.nn.init.normal_(self.mask_token, std=.02)
     
     def patchify(self, imgs):
-        """
-        imgs: (N, 3, H, W)
-        x: (N, L, patch_size**2 *3)
-        """
+        N, C, H, W = imgs.shape
         p = self.patch_size
-        assert imgs.shape[2] == imgs.shape[3] and imgs.shape[2] % p == 0
 
-        h = w = imgs.shape[2] // p
-        x = imgs.reshape(shape=(imgs.shape[0], 3, h, p, w, p))
+        h = H // p
+        w = W // p
+        x = imgs.reshape((N, C, h, p, w, p))
         x = torch.einsum('nchpwq->nhwpqc', x)
-        x = x.reshape(shape=(imgs.shape[0], h * w, p**2 * 3))
+        x = x.reshape((N, h * w, p * p * C))
         return x
 
-    def unpatchify(self, x):
-        """
-        x: (N, L, patch_size**2 *3)
-        imgs: (N, 3, H, W)
-        """
-        p = self.patch_size
-        h = w = int(x.shape[1]**.5)
-        assert h * w == x.shape[1]
+    # def unpatchify(self, x):
+    #     N, L, D = x.shape
+    #     p = self.patch_size
+    #     H, W = self.img_size
+    #     C = D // (p * p) # color
+    #     h = H // p
+    #     w = W // p
+    #     assert L == h * w
         
-        x = x.reshape(shape=(x.shape[0], h, w, p, p, 3))
-        x = torch.einsum('nhwpqc->nchpwq', x)
-        imgs = x.reshape(shape=(x.shape[0], 3, h * p, h * p))
-        return imgs
+    #     x = x.reshape((N, h, w, p, p, C))
+    #     x = torch.einsum('nhwpqc->nchpwq', x)
+    #     imgs = x.reshape((N, C, h * p, w * p))
+    #     return imgs
 
     def gen_random_mask(self, x, mask_ratio):
         N, _, H, W = x.shape
-        num_patch_H = H // self.patch_size
-        num_patch_W = W // self.patch_size
-        L = num_patch_H * num_patch_W
+        L = (H // self.patch_size) * (W // self.patch_size)
         len_keep = int(L * (1 - mask_ratio))
-
         noise = torch.randn(N, L, device=x.device)
 
         # sort noise for each sample
@@ -113,31 +104,28 @@ class FCMAE(nn.Module):
         mask[:, :len_keep] = 0
         # unshuffle to get the binary mask
         mask = torch.gather(mask, dim=1, index=ids_restore)
-        return mask
-
-    def upsample_mask(self, mask, scale):
-        assert len(mask.shape) == 2
-        p = int(mask.shape[1] ** .5)
-        return mask.reshape(-1, p, p).\
-                    repeat_interleave(scale, axis=1).\
-                    repeat_interleave(scale, axis=2)
+        return mask.bool()
     
     def forward_encoder(self, imgs, mask_ratio):
         # generate random masks
-        mask = self.gen_random_mask(imgs, mask_ratio)
+        mask = self.gen_random_mask(imgs, mask_ratio) # [N, L], 0 is keep, 1 is remove
         # encoding
         N, _, H, W = imgs.shape
-        mask_upsampled = mask.reshape(N, 1, H // self.patch_size, W // self.patch_size)
-        mask_upsampled = F.interpolate(mask_upsampled.float(), scale_factor=self.patch_size, mode='nearest').bool()
+        p = self.patch_size
+        assert H % p == W % p == 0, f"Invalid image size: {H}x{W}"
+        # upsampling
+        mask_upsampled = mask.reshape(N, 1, H // p, W // p).\
+                    repeat_interleave(p, axis=2).repeat_interleave(p, axis=3)
         x = self.encoder(imgs, mask_upsampled)
+
         return x, mask
 
     def forward_decoder(self, x, mask):
         x = self.proj(x)
         # append mask token
-        n, c, h, w = x.shape
-        mask = mask.reshape(-1, h, w).unsqueeze(1).type_as(x)
-        mask_token = self.mask_token.repeat(x.shape[0], 1, x.shape[2], x.shape[3])
+        n, _, h, w = x.shape
+        mask = mask.reshape(n, 1, h, w).type_as(x)
+        mask_token = self.mask_token.repeat(n, 1, h, w)
         x = x * (1. - mask) + mask_token * mask
         # decoding
         x = self.decoder(x)
@@ -147,16 +135,15 @@ class FCMAE(nn.Module):
 
     def forward_loss(self, imgs, pred, mask):
         """
-        imgs: [N, 3, H, W]
-        pred: [N, L, p*p*3]
+        imgs: [N, C, H, W]
+        pred: [N, D=p*p*C, H//p, W//p]
         mask: [N, L], 0 is keep, 1 is remove
         """
-        if len(pred.shape) == 4:
-            n, c, _, _ = pred.shape
-            pred = pred.reshape(n, c, -1)
-            pred = torch.einsum('ncl->nlc', pred)
+        N, D, _, _ = pred.shape
+        pred = pred.reshape(N, D, -1) # (N, D, L)
+        pred = torch.einsum('ndl->nld', pred) # (N, L, D)
 
-        target = self.patchify(imgs)
+        target = self.patchify(imgs) # (N, L, D)
         if self.norm_pix_loss:
             mean = target.mean(dim=-1, keepdim=True)
             var = target.var(dim=-1, keepdim=True)
@@ -169,9 +156,6 @@ class FCMAE(nn.Module):
 
     def forward(self, imgs, labels=None, mask_ratio=0.6):
         x, mask = self.forward_encoder(imgs, mask_ratio)
-        # print(x.shape, mask.shape)
         pred = self.forward_decoder(x, mask)
-        # print(pred.shape, imgs.shape, mask.shape)
-        # exit()
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
