@@ -11,7 +11,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.layers import trunc_normal_, DropPath
-from .utils import LayerNorm, GRN
+from .layer_utils import LayerNorm, GRN
+from typing import List
 
 class Block(nn.Module):
     """ ConvNeXtV2 Block.
@@ -49,21 +50,22 @@ class ConvNeXtV2(nn.Module):
     """ ConvNeXt V2
         
     Args:
-        in_chans (int): Number of input image channels. Default: 3
-        depths (tuple(int)): Number of blocks at each stage. Default: [3, 3, 9, 3]
-        dims (int): Feature dimension at each stage. Default: [96, 192, 384, 768]
-        drop_path_rate (float): Stochastic depth rate. Default: 0.
+        in_chans (int): Number of input image channels.
+        depths (tuple(int)): Number of blocks at each stage.
+        dims (int): Feature dimension at each stage.
+        drop_path_rate (float): Stochastic depth rate. default: 0.0
     """
     def __init__(
         self,
-        in_chans=3, 
-        stem_stride=4,
-        depths=[3, 3, 9, 3],
-        dims=[96, 192, 384, 768], 
-        drop_path_rate=0.,
+        in_chans: int, 
+        stem_stride: int,
+        depths: List[int],
+        dims: List[int], 
+        drop_path_rate: float=0.0,
     ):
         super().__init__()
         self.depths = depths
+        self.dims = dims
         # downsample_layers
         self.downsample_layers = nn.ModuleList()
         stem = nn.Sequential(
@@ -110,44 +112,52 @@ class ConvNeXtV2(nn.Module):
         return x
 
 class ConvNeXtV2Sparse(ConvNeXtV2):
+    """
+    ConvNeXtV2 for FCMAE.
+
+    Args:
+        Same as ConvNeXtV2, plus:
+        mask (torch.Tensor): Binary mask indicating valid input regions (1 = masked, 0 = valid).
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-    
-    # @torch.no_grad()
+
     def downsample_mask(self, mask, target_size):
+        """
+        Downsample the mask to match the spatial size of the feature map.
+
+        Args:
+            mask (torch.Tensor): Input mask of shape (N, 1, H, W).
+            target_size (int): Target spatial size after downsampling.
+
+        Returns:
+            torch.Tensor: Downsampled mask.
+        """
         stride = mask.shape[-1] // target_size
         mask = mask[:, :, ::stride, ::stride]
         return mask
-    
+
     def forward(self, x, mask):
-        assert x.shape[-1] == mask.shape[-1]
-        assert len(x.shape) == len(mask.shape) == 4
-        x *= (~mask).float()
-        # feature extraction
+        """
+        Forward pass with sparse masking.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (N, C, H, W).
+            mask (torch.Tensor): Binary mask of shape (N, 1, H, W).
+
+        Returns:
+            torch.Tensor: Output tensor after applying sparse masking.
+        """
+        assert x.shape[-1] == mask.shape[-1], "Input and mask spatial dimensions must match."
+        assert len(x.shape) == len(mask.shape) == 4, "Input and mask must be 4D tensors."
+        x = x * (~mask).float()  # Zero out masked regions
+
         for i in range(len(self.depths)):
             x = self.downsample_layers[i](x)
             mask = self.downsample_mask(mask, target_size=x.shape[-1])
             x = x * (~mask).float()
             for layer in self.stages[i]:
                 x = layer(x) * (~mask).float()
-                
+
+        x = self.head(x)
         return x
-
-
-class ClassificationHead(nn.Module):
-    """ ConvNeXtV2 Classification Head.
-    
-    Args:
-        num_classes (int): Number of classes. Default: 1000
-        in_dim (int): Input dimension. Default: 768
-        head_init_scale (float): Init scaling value for classifier weights and biases. Default: 1.
-    """
-    def __init__(self, num_classes, in_dim, head_init_scale=1.):
-        super().__init__()
-        self.norm = nn.LayerNorm(in_dim, eps=1e-6)
-        self.head = nn.Linear(in_dim, num_classes)
-        self.head.weight.data.mul_(head_init_scale)
-        self.head.bias.data.mul_(head_init_scale)
-
-    def forward(self, x):
-        return self.head(self.norm(x.mean([-2, -1])))

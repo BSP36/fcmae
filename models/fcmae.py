@@ -1,13 +1,25 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import List, Tuple
-
 from timm.models.layers import trunc_normal_
+
 from .convnextv2 import Block, ConvNeXtV2Sparse
+from .patch_utils import patch_wise_normalize, patchify
+
 
 class FCMAE(nn.Module):
-    """ Fully Convolutional Masked Autoencoder with ConvNeXtV2 backbone
+    """
+    Full Convolutional Masked AutoEncoder (FCMAE) module.
+
+    Args:
+        num_colors (int): Number of input image channels (e.g., 3 for RGB).
+        stem_stride (int): Stride for the initial convolutional stem.
+        depths (List[int]): Number of blocks at each stage of the encoder.
+        dims (List[int]): Feature dimensions at each encoder stage.
+        decoder_depth (int): Number of blocks in the decoder.
+        dec_dim (int): Feature dimension in the decoder.
+        patch_size (int): Size of each image patch (patch_size x patch_size).
+        norm_pix_loss (bool, optional): If True, normalize pixel values when computing loss. Defaults to False.
     """
     def __init__(
         self,
@@ -16,19 +28,17 @@ class FCMAE(nn.Module):
         depths: List[int],
         dims: List[int],
         decoder_depth: int,
-        decoder_embed_dim: int,
+        dec_dim: int,
         patch_size: int,
-        mask_ratio: float,
         norm_pix_loss: bool=False
     ):
         super().__init__()
+        # sanity check
         assert len(depths) == len(dims)
-        # assert image_shape[0] % patch_size == image_shape[1] % patch_size == 0
         assert stem_stride * 2 ** (len(depths) - 1) == patch_size
 
         # configs
         self.patch_size = patch_size
-        self.mask_ratio = mask_ratio
         self.norm_pix_loss = norm_pix_loss
 
         # Encoder
@@ -38,15 +48,15 @@ class FCMAE(nn.Module):
             depths=depths,
             dims=dims
         )
-        # Decoder
-        self.proj = nn.Conv2d(in_channels=dims[-1],  out_channels=decoder_embed_dim, kernel_size=1)
         # Mask tokens
-        self.mask_token = nn.Parameter(torch.zeros(1, decoder_embed_dim, 1, 1))
-        decoder = [Block(decoder_embed_dim) for _ in range(decoder_depth)]
+        self.mask_token = nn.Parameter(torch.zeros(1, dec_dim, 1, 1))
+        # Decoder
+        self.proj = nn.Conv2d(in_channels=dims[-1],  out_channels=dec_dim, kernel_size=1)
+        decoder = [Block(dec_dim) for _ in range(decoder_depth)]
         self.decoder = nn.Sequential(*decoder)
         # pred
         self.pred = nn.Conv2d(
-            in_channels=decoder_embed_dim,
+            in_channels=dec_dim,
             out_channels=patch_size * patch_size * num_colors,
             kernel_size=1
         )
@@ -54,42 +64,20 @@ class FCMAE(nn.Module):
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
-        if isinstance(m, nn.Conv2d):
-            w = m.weight.data
-            trunc_normal_(w.view([w.shape[0], -1]))
-            nn.init.constant_(m.bias, 0)
-        if isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
         if hasattr(self, 'mask_token'):    
             torch.nn.init.normal_(self.mask_token, std=.02)
     
-    def patchify(self, imgs):
-        N, C, H, W = imgs.shape
-        p = self.patch_size
+    def gen_random_mask(self, x: torch.Tensor, mask_ratio: float) -> torch.Tensor:
+        """
+        Generate a random binary mask for input images.
 
-        h = H // p
-        w = W // p
-        x = imgs.reshape((N, C, h, p, w, p))
-        x = torch.einsum('nchpwq->nhwpqc', x)
-        x = x.reshape((N, h * w, p * p * C))
-        return x
+        Args:
+            x (torch.Tensor): Input images of shape (N, C, H, W).
+            mask_ratio (float): Ratio of patches to mask (between 0 and 1).
 
-    # def unpatchify(self, x):
-    #     N, L, D = x.shape
-    #     p = self.patch_size
-    #     H, W = self.img_size
-    #     C = D // (p * p) # color
-    #     h = H // p
-    #     w = W // p
-    #     assert L == h * w
-        
-    #     x = x.reshape((N, h, w, p, p, C))
-    #     x = torch.einsum('nhwpqc->nchpwq', x)
-    #     imgs = x.reshape((N, C, h * p, w * p))
-    #     return imgs
-
-    def gen_random_mask(self, x, mask_ratio):
+        Returns:
+            torch.Tensor: Boolean mask of shape (N, L), where 0 indicates a kept patch and 1 indicates a masked patch.
+        """
         N, _, H, W = x.shape
         L = (H // self.patch_size) * (W // self.patch_size)
         len_keep = int(L * (1 - mask_ratio))
@@ -106,56 +94,100 @@ class FCMAE(nn.Module):
         mask = torch.gather(mask, dim=1, index=ids_restore)
         return mask.bool()
     
-    def forward_encoder(self, imgs, mask_ratio):
+    
+    def forward_encoder(self, x: torch.Tensor, mask_ratio: float) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Generate a random mask and extract encoder features.
+
+        Args:
+            x (torch.Tensor): Input images of shape (N, C, H, W).
+            mask_ratio (float): Ratio of patches to mask (between 0 and 1).
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: Tuple containing the encoder feature map (N, D, h, w) and the mask (N, L).
+        """
         # generate random masks
-        mask = self.gen_random_mask(imgs, mask_ratio) # [N, L], 0 is keep, 1 is remove
+        mask = self.gen_random_mask(x, mask_ratio) # [N, L], 0 is keep, 1 is remove
         # encoding
-        N, _, H, W = imgs.shape
+        N, _, H, W = x.shape
         p = self.patch_size
         assert H % p == W % p == 0, f"Invalid image size: {H}x{W}"
         # upsampling
         mask_upsampled = mask.reshape(N, 1, H // p, W // p).\
                     repeat_interleave(p, axis=2).repeat_interleave(p, axis=3)
-        x = self.encoder(imgs, mask_upsampled)
+        x = self.encoder(x, mask_upsampled)
 
         return x, mask
 
-    def forward_decoder(self, x, mask):
+    def forward_decoder(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """
+        Estimate the removed patches from the feature map.
+
+        Args:
+            x (torch.Tensor): Feature map of shape (N, emb_dim, h=H//p, w=W//p).
+            mask (torch.Tensor): Binary mask of shape (N, L), where 0 indicates a kept patch and 1 indicates a masked patch.
+
+        Returns:
+            torch.Tensor: Predicted patches of shape (N, D=p*p*C, h, w).
+        """
         x = self.proj(x)
         # append mask token
         n, _, h, w = x.shape
         mask = mask.reshape(n, 1, h, w).type_as(x)
         mask_token = self.mask_token.repeat(n, 1, h, w)
-        x = x * (1. - mask) + mask_token * mask
+        x = x * (1.0 - mask) + mask_token * mask
         # decoding
         x = self.decoder(x)
         # pred
         pred = self.pred(x)
         return pred
 
-    def forward_loss(self, imgs, pred, mask):
+    def forward_loss(self, imgs: torch.Tensor, pred: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """
-        imgs: [N, C, H, W]
-        pred: [N, D=p*p*C, H//p, W//p]
-        mask: [N, L], 0 is keep, 1 is remove
+        Compute the reconstruction loss for FCMAE.
+
+        Args:
+            imgs (torch.Tensor): Input images of shape (N, C, H, W).
+            pred (torch.Tensor): Predicted patches of shape (N, D, h, w).
+            mask (torch.Tensor): Binary mask of shape (N, L), where 0 indicates a kept patch and 1 indicates a masked patch.
+
+        Returns:
+            torch.Tensor: Mean squared error (MSE) loss computed over masked (removed) patches.
         """
-        N, D, _, _ = pred.shape
-        pred = pred.reshape(N, D, -1) # (N, D, L)
+        N, D, h, w = pred.shape
+        pred = pred.reshape(N, D, h * w) # (N, D, L)
         pred = torch.einsum('ndl->nld', pred) # (N, L, D)
 
-        target = self.patchify(imgs) # (N, L, D)
+        target = patchify(imgs, self.patch_size) # (N, L, D)
         if self.norm_pix_loss:
-            mean = target.mean(dim=-1, keepdim=True)
-            var = target.var(dim=-1, keepdim=True)
-            target = (target - mean) / (var + 1.e-6)**.5
+            target = patch_wise_normalize(target)
+        
         loss = (pred - target) ** 2
-        loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
-
+        loss = loss.mean(dim=-1)  # (N, L)
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
 
-    def forward(self, imgs, labels=None, mask_ratio=0.6):
-        x, mask = self.forward_encoder(imgs, mask_ratio)
-        pred = self.forward_decoder(x, mask)
+    def forward(
+        self, 
+        imgs: torch.Tensor, 
+        mask_ratio: float = 0.6
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Forward pass for FCMAE.
+
+        Args:
+            imgs (torch.Tensor): Input images of shape (N, C, H, W).
+            mask_ratio (float, optional): Ratio of patches to mask. Defaults to 0.6.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: 
+                - loss (torch.Tensor): Reconstruction loss over masked patches.
+                - pred (torch.Tensor): Predicted patches of shape (N, D, h, w).
+                - mask (torch.Tensor): Binary mask of shape (N, L).
+        """
+        features, mask = self.forward_encoder(imgs.clone(), mask_ratio)
+        # print("feature", features.max().item(), features.min().item())
+        pred = self.forward_decoder(features, mask)
+        # print(imgs.max().item(), imgs.min().item(), pred.max().item(), pred.min().item())
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
