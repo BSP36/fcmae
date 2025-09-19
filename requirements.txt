@@ -1,5 +1,11 @@
 torch
+torchvision
 timm
 tqdm
 torchinfo
 tensorboard
+scikit-learn
+opencv-python
+matplotlib
+seaborn
+

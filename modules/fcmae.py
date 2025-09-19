@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from typing import List, Tuple
-from timm.models.layers import trunc_normal_
 
 from .convnextv2 import Block, ConvNeXtV2Sparse
 from .patch_utils import patch_wise_normalize, patchify

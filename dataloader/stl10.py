@@ -28,7 +28,7 @@ def get_stl10_dataloaders(
 
 def simple_transform(input_size: tuple) -> transforms.Compose:
     """
-    Returns a torchvision transform pipeline inspired by ConvNeXtV2 preprocessing.
+    Returns a simple torchvision transform pipeline.
 
     Args:
         input_size (tuple): Desired output image size as (height, width).

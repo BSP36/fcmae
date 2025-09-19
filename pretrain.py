@@ -15,7 +15,6 @@ def train_fcmae(
     output_dir,
     writer,
 ):
-    
     model.train()
     global_step = 0
     best_loss = float('inf')
@@ -77,12 +76,11 @@ def train_fcmae(
 
 if __name__ == '__main__':
     from configs.args import parse_args
-    from models.fcmae import FCMAE
+    from modules.fcmae import FCMAE
     from dataloader.stl10 import get_stl10_dataloaders, simple_transform
 
     args = parse_args()
     patch_size = args.stem_stride * 2 ** (len(args.dims) - 1)
-    print(patch_size)
 
     model = FCMAE(
         num_colors=3,
@@ -108,14 +106,12 @@ if __name__ == '__main__':
         num_workers=0, 
         data_root='./datasets/stl10'
     )
-    print(len(unlabelded_loader.dataset))
     unlabelded_loader.dataset.transform = simple_transform(image_size)
 
     # Optimizer & Scheduler
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.base_lr, weight_decay=0.05)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs * len(unlabelded_loader), eta_min=args.base_lr / 10)
-    # scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, total_iters=args.epochs * len(unlabelded_loader), end_factor=0.1)
-    # scheduler = torch.optim.lr_scheduler.
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=args.epochs * len(unlabelded_loader), eta_min=args.base_lr / 10)
     writer = tensorboard.SummaryWriter(log_dir=os.path.join(args.output, "runs"))
 
     train_fcmae(

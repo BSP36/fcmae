@@ -1,25 +1,15 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-
-# All rights reserved.
-
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
-# Minor modifications made by BSP36
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from timm.models.layers import trunc_normal_, DropPath
 from .layer_utils import LayerNorm, GRN
 from typing import List
 
 class Block(nn.Module):
-    """ ConvNeXtV2 Block.
-    
+    """ConvNeXtV2 Block (as in the original implementation)
+
     Args:
         dim (int): Number of input channels.
-        drop_path (float): Stochastic depth rate. Default: 0.0
+        drop_path (float): Stochastic depth rate. Default is 0.0.
     """
     def __init__(self, dim, drop_path=0.):
         super().__init__()
@@ -90,8 +80,6 @@ class ConvNeXtV2(nn.Module):
             cur += depths[i]
 
         self.apply(self._init_weights)
-        # head
-        self.head = nn.Identity() # for FCMAE
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv2d, nn.Linear)):
@@ -107,8 +95,6 @@ class ConvNeXtV2(nn.Module):
             x = self.downsample_layers[i](x)
             for layer in self.stages[i]:
                 x = layer(x)
-        # head
-        x = self.head(x)
         return x
 
 class ConvNeXtV2Sparse(ConvNeXtV2):
@@ -158,6 +144,4 @@ class ConvNeXtV2Sparse(ConvNeXtV2):
             x = x * (~mask).float()
             for layer in self.stages[i]:
                 x = layer(x) * (~mask).float()
-
-        x = self.head(x)
         return x
