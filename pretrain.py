@@ -125,7 +125,7 @@ if __name__ == '__main__':
         datatype="unlabeled",  
         batch_size=args.batch_size,
         num_workers=0, 
-        data_root='./datasets/stl10'
+        data_root='./datasets/stl10',
         shuffle=True,
     )
     unlabelded_loader.dataset.transform = simple_transform(image_size)
