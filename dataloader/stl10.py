@@ -1,4 +1,3 @@
-import os
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 
@@ -7,6 +6,7 @@ def get_stl10_dataloaders(
         batch_size: int,
         num_workers: int,
         data_root: str,
+        shuffle: bool,
         mean: list=[0.485, 0.456, 0.406],
         std: list=[0.229, 0.224, 0.225],
 ):
@@ -17,12 +17,12 @@ def get_stl10_dataloaders(
         transforms.Normalize(mean=mean, std=std),
     ])
     dataset = datasets.STL10(
-        root=os.path.join(data_root, datatype),
+        root=data_root,
         split=datatype,
         download=True,
         transform=transform
     )
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=(datatype!='test'), num_workers=num_workers)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
     return dataloader
 
 

@@ -69,8 +69,7 @@ def train_classifer(
                 logits = model(images)
                 loss = criterion(logits, labels)
 
-                batch_loss = loss.item() * images.shape[0]
-                epoch_val_loss += batch_loss * logits.shape[0]
+                epoch_val_loss += loss.item() * logits.shape[0]
                 # pred should have a shape (N, num_classes, .....)
                 pred = torch.argmax(logits, dim=1).cpu().numpy().flatten()
                 gt = labels.cpu().numpy().flatten()
@@ -120,6 +119,7 @@ if __name__ == '__main__':
     from configs.args import parse_args_ft
     from modules.convnextv2 import ConvNeXtV2
     from modules.task import Classifier
+    from utils.custom_optimizer import build_optimizer, warmup_cosine_scheduler
     from dataloader.stl10 import get_stl10_dataloaders, simple_transform
     args = parse_args_ft()
 
@@ -129,7 +129,8 @@ if __name__ == '__main__':
         datatype="train",  
         batch_size=args.batch_size,
         num_workers=args.num_workers, 
-        data_root='./datasets/stl10'
+        data_root='./datasets/stl10',
+        shuffle=True,
     )
     classes = train_loader.dataset.classes
     train_loader.dataset.transform = simple_transform(image_size)
@@ -138,7 +139,8 @@ if __name__ == '__main__':
         datatype="test",  
         batch_size=args.batch_size,
         num_workers=args.num_workers, 
-        data_root='./datasets/stl10'
+        data_root='./datasets/stl10',
+        shuffle=False
     )
 
     # Model
@@ -151,19 +153,13 @@ if __name__ == '__main__':
     if args.ckpt:
         print(f"Use a pretrained model: {args.ckpt}")
         checkpoint = torch.load(args.ckpt, map_location='cpu')
-        # print(checkpoint['model_state_dict'].keys())
         encoder_dict = {k.replace("encoder.", ""):v for k, v in checkpoint['model_state_dict'].items() if "encoder." in k}
         backbone.load_state_dict(encoder_dict)
     model = Classifier(num_classes=len(classes), backbone=backbone)
     device = args.device
     model.to(device)
     
-
     # Optimizer & Scheduler
-    # optimizer = torch.optim.AdamW(model.parameters(), lr=args.base_lr, weight_decay=0.05)
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    #     optimizer, T_max=args.epochs * len(train_loader), eta_min=args.base_lr / 10)
-    from utils.custom_optimizer import build_optimizer, warmup_cosine_scheduler
     optimizer = build_optimizer(
         model,
         base_lr=args.base_lr,
