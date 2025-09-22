@@ -20,17 +20,19 @@ def get_metrics(cm, class_names, eps=1e-8):
     # Per-class metrics
     for idx, name in enumerate(class_names):
         metrics[f"acc_{name}"] = per_class_acc[idx]
-        metrics[f"f1_{name}"] = per_class_acc[idx]
+        metrics[f"f1_{name}"] = f1[idx]
 
     return metrics
 
 
-def viz_conf_mat(cm, class_names, output_path):
+def viz_conf_mat(cm, class_names, output_path, title=None):
     plt.figure(figsize=(8, 6))
     cm = np.astype(cm, np.int64)
     sns.heatmap(cm, annot=True, fmt="d", cmap="magma_r", xticklabels=class_names, yticklabels=class_names)
     plt.xlabel("Predicted", fontsize=16)
     plt.ylabel("True", fontsize=16)
+    if title:
+        plt.title(title, fontsize=16)
     plt.tight_layout()
     if output_path:
         plt.savefig(output_path)

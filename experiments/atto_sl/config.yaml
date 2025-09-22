@@ -1,0 +1,29 @@
+base_lr: 0.00015
+batch_size: 128
+bb_mult: 1.0
+ckpt: ./experiments/atto/checkpoints/fcmae_best.pth
+decoder_depth: 1
+decoder_embed_dim: 512
+depths:
+- 2
+- 2
+- 6
+- 2
+device: cuda
+dims:
+- 40
+- 80
+- 160
+- 320
+epochs: 300
+mask_ratio: 0.6
+name: atto_sl
+norm_pix_loss: true
+num_workers: 8
+output: ./experiments/atto_sl
+pre: atto
+save_interval: 10
+stem_stride: 2
+warmup_epochs: 4
+weight_decay: 0.05
+without_pre: false

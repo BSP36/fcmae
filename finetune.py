@@ -5,22 +5,42 @@ import torch.utils.tensorboard as tensorboard
 from tqdm import tqdm
 from sklearn.metrics import confusion_matrix
 from utils.metrics import get_metrics, viz_conf_mat
+from typing import Sequence
+
 
 def train_classifer(
-    model,
-    criterion,
-    train_loader,
-    val_loader,
-    classes,
-    optimizer,
-    scheduler,
-    device,
-    num_epochs,
-    save_interval,
-    output_dir,
-    writer,
-    best_metrics_target="all_acc",
+    model: torch.nn.Module,
+    criterion: torch.nn.Module,
+    train_loader: torch.utils.data.DataLoader,
+    val_loader: torch.utils.data.DataLoader,
+    classes: Sequence[str],
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler._LRScheduler,
+    device: torch.device,
+    num_epochs: int,
+    save_interval: int,
+    output_dir: str,
+    writer: tensorboard.SummaryWriter,
+    best_metrics_target: str = "all_acc",
 ):
+    """Trains a deep learning classifier model
+
+    Args:
+        model (torch.nn.Module): Classifer model
+        criterion (torch.nn.Module): Loss function
+        train_loader (torch.utils.data.DataLoader): DataLoader for training data.
+        val_loader (torch.utils.data.DataLoader): DataLoader for validation data.
+        classes (Sequence[str]): Classification labels
+        optimizer (torch.optim.Optimizer): Optimizer for model parameters.
+        scheduler (torch.optim.lr_scheduler._LRScheduler): Learning rate scheduler.
+        device (torch.device): Device to run training on (CPU or CUDA).
+        num_epochs (int): Number of training epochs.
+        save_interval (int): Interval (in epochs) to save checkpoints.
+        output_dir (str): Directory to save model checkpoints.
+        writer (tensorboard.SummaryWriter): TensorBoard writer for logging.
+        best_metrics_target (str, optional): Metric name used to determine the best model checkpoint. Defaults to "all_acc".
+    """
+
     global_step = 0
     best_metrics = float('inf') if "loss" in best_metrics_target else -float('inf')
     for epoch in range(num_epochs):
@@ -123,7 +143,7 @@ if __name__ == '__main__':
     from dataloader.stl10 import get_stl10_dataloaders, simple_transform
     args = parse_args_ft()
 
-    # Unsupervised set (no labels)
+    # Dataloaders
     image_size = (96, 96)
     train_loader = get_stl10_dataloaders(
         datatype="train",  
@@ -134,7 +154,6 @@ if __name__ == '__main__':
     )
     classes = train_loader.dataset.classes
     train_loader.dataset.transform = simple_transform(image_size)
-
     val_loader = get_stl10_dataloaders(
         datatype="test",  
         batch_size=args.batch_size,
@@ -159,7 +178,7 @@ if __name__ == '__main__':
     device = args.device
     model.to(device)
     
-    # Optimizer & Scheduler
+    # Others
     optimizer = build_optimizer(
         model,
         base_lr=args.base_lr,
@@ -172,7 +191,6 @@ if __name__ == '__main__':
         total_steps=args.epochs * len(train_loader),
         min_lr_ratio=0.1
     )
-
     criterion = torch.nn.CrossEntropyLoss()
     writer = tensorboard.SummaryWriter(log_dir=os.path.join(args.output, "runs"))
 

@@ -14,7 +14,7 @@ def train_fcmae(
     save_interval: int,
     output_dir: str,
     writer: tensorboard.SummaryWriter,
-) -> None:
+):
     """
     Train the FCMAE model using masked autoencoding.
 
@@ -29,9 +29,6 @@ def train_fcmae(
         save_interval (int): Interval (in epochs) to save checkpoints.
         output_dir (str): Directory to save model checkpoints.
         writer (tensorboard.SummaryWriter): TensorBoard writer for logging.
-
-    Returns:
-        None
     """
     model.train()
     global_step = 0

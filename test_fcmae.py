@@ -31,7 +31,7 @@ def eval_fcmae(
     mean: Sequence[float] = (0.485, 0.456, 0.406),
     seed: int = 42,
     num_viz: int = 10**8,
-) -> None:
+):
     """
     Runs inference for the FCMAE model on the test dataset and saves visualizations.
 
@@ -45,9 +45,6 @@ def eval_fcmae(
         mean (Sequence[float], optional): Per-channel mean for normalization. Default is ImageNet mean.
         seed (int, optional): Random seed for random mask. Default is 42.
         num_viz (int, optional): The number of images to visualize. Default is 10**8.
-
-    Returns:
-        None
     """
     model = model.to(device).eval()
     std_tensor = torch.tensor(std, dtype=torch.float32)[None, :, None, None].to(device)

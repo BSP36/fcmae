@@ -17,7 +17,7 @@ def patchify(image: torch.Tensor, P: int) -> torch.Tensor:
     x = x.reshape((N, L, P * P * C))
     return x
 
-def patch_wise_normalize(patch: torch.Tensor, eps: float=1e-6):
+def patch_wise_normalize(patch: torch.Tensor, eps: float = 1e-6):
     """Normalize patches by subtracting the mean and dividing by the standard deviation.
 
     Args:

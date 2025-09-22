@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 from timm.models.layers import trunc_normal_, DropPath
 from .layer_utils import LayerNorm, GRN
-from typing import List
+from typing import Sequence
+
 
 class Block(nn.Module):
     """ConvNeXtV2 Block (as in the original implementation)
@@ -41,17 +42,18 @@ class ConvNeXtV2(nn.Module):
         
     Args:
         in_chans (int): Number of input image channels.
-        depths (tuple(int)): Number of blocks at each stage.
-        dims (int): Feature dimension at each stage.
-        drop_path_rate (float): Stochastic depth rate. default: 0.0
+        stem_stride (int): Stride for the initial convolutional stem.
+        depths (Sequence[int]): Number of blocks at each stage of the encoder.
+        dims (Sequence[int]): Feature dimensions at each encoder stage.
+        drop_path_rate (float, optional): Stochastic depth rate. Defaults to 0.0.
     """
     def __init__(
         self,
         in_chans: int, 
         stem_stride: int,
-        depths: List[int],
-        dims: List[int], 
-        drop_path_rate: float=0.0,
+        depths: Sequence[int],
+        dims: Sequence[int], 
+        drop_path_rate: float = 0.0,
     ):
         super().__init__()
         self.depths = depths
@@ -97,6 +99,7 @@ class ConvNeXtV2(nn.Module):
                 x = layer(x)
         return x
 
+
 class ConvNeXtV2Sparse(ConvNeXtV2):
     """
     ConvNeXtV2 for FCMAE.
@@ -123,7 +126,7 @@ class ConvNeXtV2Sparse(ConvNeXtV2):
         mask = mask[:, :, ::stride, ::stride]
         return mask
 
-    def forward(self, x, mask):
+    def forward(self, x, mask) -> torch.Tensor:
         """
         Forward pass with sparse masking.
 

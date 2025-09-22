@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import List, Tuple
+from typing import Sequence, Tuple
 
 from .convnextv2 import Block, ConvNeXtV2Sparse
 from .patch_utils import patch_wise_normalize, patchify
@@ -13,8 +13,8 @@ class FCMAE(nn.Module):
     Args:
         num_colors (int): Number of input image channels (e.g., 3 for RGB).
         stem_stride (int): Stride for the initial convolutional stem.
-        depths (List[int]): Number of blocks at each stage of the encoder.
-        dims (List[int]): Feature dimensions at each encoder stage.
+        depths (Sequence[int]): Number of blocks at each stage of the encoder.
+        dims (Sequence[int]): Feature dimensions at each encoder stage.
         decoder_depth (int): Number of blocks in the decoder.
         dec_dim (int): Feature dimension in the decoder.
         patch_size (int): Size of each image patch (patch_size x patch_size).
@@ -24,19 +24,19 @@ class FCMAE(nn.Module):
         self,
         num_colors: int,
         stem_stride: int,
-        depths: List[int],
-        dims: List[int],
+        depths: Sequence[int],
+        dims: Sequence[int],
         decoder_depth: int,
         dec_dim: int,
         patch_size: int,
-        norm_pix_loss: bool=False
+        norm_pix_loss: bool = False
     ):
         super().__init__()
-        # sanity check
+        # Sanity check
         assert len(depths) == len(dims)
         assert stem_stride * 2 ** (len(depths) - 1) == patch_size
 
-        # configs
+        # Configs
         self.patch_size = patch_size
         self.norm_pix_loss = norm_pix_loss
 
