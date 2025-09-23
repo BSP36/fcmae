@@ -98,12 +98,6 @@ For each model, we report the final MAE loss across all dataset splits, with and
 | atto |0.527| 0.523 |0.523 | 0.483 | 0.477 | 0.473 |
 | nano | 0.513 | 0.509 |0.509 | 0.467 | 0.461 | 0.456 |
 
-Key takeaways:
-
-Larger models achieve lower reconstruction loss.
-
-Data augmentation reduces loss slightly, but the relative performance order remains consistent.
-
 **Observations:**
 
 * Larger models consistently achieve lower reconstruction loss.
